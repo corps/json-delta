@@ -1,0 +1,363 @@
+export type AnyJson = boolean | number | string | null | JsonArray | JsonMap;
+interface JsonMap {
+  [key: string]: AnyJson;
+}
+interface JsonArray extends Array<AnyJson> {}
+
+export type ObjPath = (string | number)[];
+export type DiffInsert = [ObjPath, any];
+export type DiffPart = DiffInsert | ObjPath;
+export type Diff = DiffPart[];
+
+export function isInsert(d: DiffPart): d is DiffInsert {
+  return isArr(d[0]);
+}
+
+export function isObj(o: any): o is {[k: string]: any} {
+  return o instanceof Object && !(o instanceof Array);
+}
+
+export function isArr(o: any): o is Array<any> {
+  return o instanceof Array;
+}
+
+export function shallowCopy(o: AnyJson): AnyJson {
+  if (isObj(o)) return {...o};
+  if (isArr(o)) return o.slice();
+  return o;
+}
+
+export function getContainer(
+  orig: AnyJson,
+  result: AnyJson,
+  path: ObjPath
+): AnyJson | void {
+  let len = path.length;
+  if (!len) return undefined;
+
+  let origContainer: any = orig;
+  let container: any = result;
+
+  if (container === origContainer) container = shallowCopy(origContainer);
+
+  for (let i = 0; i < len - 1; ++i) {
+    let seg = path[i];
+
+    if (typeof seg === "number" && isArr(origContainer) && isArr(container)) {
+      origContainer = origContainer[seg];
+      if (container[seg] === origContainer) {
+        container = container[seg] = shallowCopy(origContainer);
+      } else {
+        container = container[seg];
+      }
+    }
+
+    if (typeof seg === "string" && isObj(origContainer) && isObj(container)) {
+      origContainer = origContainer[seg];
+      if (container[seg] === origContainer) {
+        container = container[seg] = shallowCopy(origContainer);
+      } else {
+        container = container[seg];
+      }
+    }
+  }
+
+  return container;
+}
+
+export function getVal(container: AnyJson, path: ObjPath): AnyJson {
+  let len = path.length;
+
+  for (let i = 0; i < len; ++i) {
+    let seg = path[i];
+
+    if (typeof seg === "number" && isArr(container)) {
+      container = container[seg];
+    }
+
+    if (typeof seg === "string" && isObj(container)) {
+      container = (container as any)[seg];
+    }
+  }
+
+  return container;
+}
+
+export function applyDiff(o: AnyJson, d: Diff | void) {
+  if (!d) return o;
+
+  let result = shallowCopy(o);
+
+  d.forEach(p => {
+    if (isInsert(p)) result = applyInsert(o, result, p);
+    else result = applyDelete(o, result, p);
+  });
+
+  return result;
+}
+
+export function applyInsert(
+  orig: AnyJson,
+  result: AnyJson,
+  insert: DiffInsert
+): AnyJson {
+  let [path, val] = insert;
+  let container: any = getContainer(orig, result, path);
+
+  if (!container) return val;
+
+  let key = path[path.length - 1];
+  if (typeof key === "number" && isArr(container)) {
+    container.splice(key, 0, val);
+  }
+
+  if (typeof key === "string" && isObj(container)) {
+    container[key] = val;
+  }
+
+  return result;
+}
+
+export function applyDelete(
+  orig: AnyJson,
+  result: AnyJson,
+  path: ObjPath
+): AnyJson {
+  let container: any = getContainer(orig, result, path);
+
+  if (!container) return null;
+
+  let key = path[path.length - 1];
+  if (typeof key === "number" && isArr(container)) {
+    container.splice(key, 1);
+    return result;
+  }
+
+  if (typeof key === "string" && isObj(container)) {
+    delete container[key];
+    return result;
+  }
+
+  return null;
+}
+
+export function diff(
+  a: AnyJson,
+  b: AnyJson,
+  tolerance = Infinity
+): Diff | void {
+  let result: Diff = [];
+  if (gatherDiff(a, b, tolerance, [], result) || result.length > tolerance)
+    return [[[], b]];
+  if (result.length === 0) return null;
+  return result;
+}
+
+function gatherDiff(
+  a: AnyJson,
+  b: AnyJson,
+  tolerance = 3,
+  path: ObjPath,
+  result: Diff
+): boolean {
+  if (a === undefined) a = null;
+  if (b === undefined) b = null;
+  if (typeof a === "number" && isNaN(a)) a = null;
+  if (typeof b === "number" && isNaN(b)) b = null;
+
+  if (a === b) return false;
+
+  if (typeof a !== typeof b) {
+    result.push([path, b]);
+    return false;
+  }
+
+  if (a instanceof Array) {
+    if (!(b instanceof Array)) {
+      result.push([path, b]);
+      return false;
+    }
+
+    let offset = 0;
+
+    const thunks: (() => void)[] = [];
+    if (
+      !arrDiff(
+        a,
+        b,
+        tolerance - result.length,
+        () => thunks.push(() => ++offset),
+        (aIdx: number, bIdx: number) =>
+          thunks.push(() =>
+            result.push(path.concat([offset]))
+          ),
+        (aIdx: number, bIdx: number) =>
+          thunks.push(() => {
+            result.push([path.concat([offset++]), (b as any)[bIdx]]);
+          })
+      )
+    )
+      return true;
+
+    for (let i = thunks.length - 1; i >= 0; --i) {
+      thunks[i]();
+    }
+
+    return false;
+  }
+
+  if (b instanceof Array) {
+    result.push([path, b]);
+    return false;
+  }
+
+  if (a instanceof Object) {
+    if (!(b instanceof Object)) {
+      result.push([path, b]);
+      return false;
+    }
+
+    for (var k in a as object) {
+      if (!(k in (b as object))) {
+        result.push(path.concat([k]));
+
+        if (result.length > tolerance) {
+          return true;
+        }
+
+        continue;
+      }
+
+      if (gatherDiff((a as any)[k], (b as any)[k], tolerance, path.concat([k]), result)){
+        return true;
+      }
+
+      if (result.length > tolerance) {
+        return true;
+      }
+    }
+
+    for (var k in b as any) {
+      if (!(k in (a as any))) {
+        result.push([path.concat([k]), (b as any)[k]]);
+
+        if (result.length > tolerance) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  result.push([path, b]);
+  return false;
+}
+
+const min = Math.min;
+const max = Math.max;
+
+export function deepEqual(a: AnyJson, b: AnyJson) {
+  return a === b || diff(a, b, 0) == null;
+}
+
+/**
+ * Finds the longest common subsequence between a and b,
+ * optionally shortcutting any search whose removed elements
+ * would exceed the provided tolerance value.
+ * If there is no match within the provided tolerance, this function
+ * returns null.
+ */
+export function lcs(
+  a: AnyJson[],
+  b: AnyJson[],
+  tolerance = Math.max(a.length, b.length)
+): AnyJson[] | void {
+  let result: AnyJson[] = [];
+  return arrDiff(a, b, tolerance, aIdx => result.push(a[aIdx]))
+    ? result.reverse()
+    : null;
+}
+
+export function arrDiff(
+  a: AnyJson[],
+  b: AnyJson[],
+  tolerance = Math.max(a.length, b.length),
+  onEq: (aIdx: number, bIdx: number) => void,
+  onPickA: (aIdx: number, bIdx: number) => void = () => null,
+  onPickB: (aIdx: number, bIdx: number) => void = () => null
+): boolean {
+  const solutions = new Uint32Array(a.length * b.length);
+  const aLen = a.length;
+  const bLen = b.length;
+
+  if (Math.abs(aLen - bLen) > tolerance) return false;
+
+  let longest = 0;
+
+  let aIdx = 0;
+  let bIdx = 0;
+  let nextA: AnyJson;
+  let nextB: AnyJson;
+  let idx: number;
+
+  for (; aIdx < aLen; ++aIdx) {
+    nextA = a[aIdx];
+
+    for (bIdx = 0; bIdx < bLen; ++bIdx) {
+      nextB = b[bIdx];
+      idx = aIdx * bLen + bIdx;
+
+      let best: number;
+      if (deepEqual(nextA, nextB)) {
+        best = (aIdx > 0 && bIdx > 0 ? solutions[idx - bLen - 1] : 0) + 1;
+        if (best > longest) {
+          longest = best;
+        }
+      } else {
+        const left = aIdx > 0 ? solutions[idx - bLen] : 0;
+        const up = bIdx > 0 ? solutions[idx - 1] : 0;
+        best = max(left, up);
+      }
+
+      solutions[idx] = best;
+
+      if (min(aIdx, bIdx) + 1 - best > tolerance) break;
+    }
+  }
+
+  if (max(aLen, bLen) - longest > tolerance) return false;
+
+  aIdx = aLen - 1;
+  bIdx = bLen - 1;
+
+  while (aIdx >= 0 && bIdx >= 0) {
+    nextA = a[aIdx];
+    nextB = b[bIdx];
+    idx = aIdx * bLen + bIdx;
+
+    if (deepEqual(nextA, nextB)) {
+      onEq(aIdx--, bIdx--);
+      continue;
+    }
+
+    let left = aIdx > 0 ? solutions[idx - bLen] : 0;
+    let up = bIdx > 0 ? solutions[idx - 1] : 0;
+
+    if (left >= up) {
+      onPickA(aIdx--, bIdx);
+    } else {
+      onPickB(aIdx, bIdx--);
+    }
+  }
+
+  while (aIdx >= 0) {
+    onPickA(aIdx--, bIdx);
+  }
+
+  while (bIdx >= 0) {
+    onPickB(aIdx, bIdx--);
+  }
+
+  return true;
+}

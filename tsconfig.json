@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "noImplicitAny": true,
+    "moduleResolution": "node",
+    "target": "es6",
+    "sourceMap": false,
+    "noUnusedLocals": true
+  },
+  "exclude": ["node_modules"]
+}
