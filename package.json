@@ -1,6 +1,6 @@
 {
   "name": "json-delta",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Json object diff / patching with configurable short-circuit tolerance.",
   "main": "index.js",
   "author": "Zach Collins <recursive.cookie.jar@gmail.com>",
