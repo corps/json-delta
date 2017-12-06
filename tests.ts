@@ -135,7 +135,7 @@ function naiveLcs(a: any[], b: any[]): any[] {
 
 const assert = QUnit.assert;
 function checkLcs(a: any[], b: any[], tolerance?: number) {
-  let naiveSeq = naiveLcs(a, b, tolerance);
+  let naiveSeq = naiveLcs(a, b);
   let seq = lcs(a, b);
 
   if (!seq) {
