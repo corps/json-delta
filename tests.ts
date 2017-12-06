@@ -129,7 +129,33 @@ function naiveLcs(a: any[], b: any[]): any[] {
 
   let bestA = naiveLcs(a.slice(1), b);
   let bestB = naiveLcs(a, b.slice(1));
-  return bestA.length > bestB.length ? bestA : bestB;
+
+  return bestA.length >= bestB.length ? bestA : bestB;
+}
+
+const assert = QUnit.assert;
+function checkLcs(a: any[], b: any[], tolerance?: number) {
+  let naiveSeq = naiveLcs(a, b, tolerance);
+  let seq = lcs(a, b);
+
+  if (!seq) {
+    assert.ok(false, "seq was empty for " + a.join(" ") + ", " + b.join(" "));
+    return false;
+  }
+
+  if (naiveSeq.length !== seq.length) {
+    assert.deepEqual(seq, naiveSeq, a.join(" ") + ", " + b.join(" "));
+    return false;
+  }
+
+  let idx = 0;
+  if (seq.some(v => (idx = console.log(v, idx) || a.indexOf(v, idx) + 1) === 0)) {
+    assert.deepEqual(seq, naiveSeq, a.join(" ") + ", " + b.join(" "));
+    return false;
+  }
+
+  assert.ok(true, a.join(" ") + ", " + b.join(" "));
+  return true;
 }
 
 function allObjPaths(o: any, curPath: ObjPath = [], result: ObjPath[] = []) {
@@ -175,17 +201,19 @@ function mutationsOf(
     let generated: AnyJson[] = [];
     let oldVGen = vGen;
     let allOriginalValues = allObjPaths(o).map(p => getVal(o, p));
-    vGen = (s) => {
-      let next = exceptDeepEqualTo(oldVGen, ...generated, ...allOriginalValues)(s);
+    vGen = s => {
+      let next = exceptDeepEqualTo(oldVGen, ...generated, ...allOriginalValues)(
+        s
+      );
       generated.push(next);
       return next;
-    }
+    };
 
     while (
-      ((isArr(unchangedOfO) && unchangedOfO.length) || (isObj(unchangedOfO) && Object.keys(unchangedOfO).length)) &&
+      ((isArr(unchangedOfO) && unchangedOfO.length) ||
+        (isObj(unchangedOfO) && Object.keys(unchangedOfO).length)) &&
       remainingMutations > 0
     ) {
-
       let allUnChangedPaths = allObjPaths(unchangedOfO);
       let path: ObjPath = qc.pick(allUnChangedPaths)(s) as any;
       let container: any;
@@ -233,7 +261,6 @@ function mutationsOf(
             resultOfDiff = applyDiff(resultOfDiff, [diff[diff.length - 1]]);
             continue;
           }
-
       }
     }
 
@@ -241,42 +268,51 @@ function mutationsOf(
   };
 }
 
-let arrWithSmallDomain = qc.arrayOf(qc.pick("a", "b", "c", "d", "e"), { length: qc.int.between(0, 12) });
+let arrWithSmallDomain = qc.arrayOf(qc.pick("a", "b", "c", "d", "e"), {
+  length: qc.int.between(0, 12),
+});
 
 function withMutations(vGen: QcGen<AnyJson>): [QcGen<AnyJson>, QcGen<Diff>] {
   let lastObj: AnyJson;
-  return [ (s: number) => (lastObj = vGen(s)), (s: number) => mutationsOf(lastObj)(s) ];
+  return [
+    (s: number) => (lastObj = vGen(s)),
+    (s: number) => mutationsOf(lastObj)(s),
+  ];
 }
 
 test("lcs", assert => {
+  checkLcs(
+    ["d", "b", "b", "b", "c", "b", "d", "d", "b", "a"],
+    ["b", "d", "d", "e", "a", "d", "a", "b", "c"]
+  );
+  checkLcs(["a", "b", "e", "c", "e"], ["c", "a", "a", "a", "e"]);
+  checkLcs(["b", "d"], ["c", "a", "b"]);
+  checkLcs([], []);
+  checkLcs(["a", "b", "e", "e", "d"], ["a", "c", "a"]);
+  checkLcs(
+    ["d", "a", "a", "e", "b", "e"],
+    ["a", "d", "c", "c", "a", "c", "d", "b", "c", "b", "c"]
+  );
+  checkLcs(["e", "c", "a", "b", "a", "d", "b", "d"], ["a", "e", "a"]);
+
+  assert.forAll(checkLcs, arrWithSmallDomain, arrWithSmallDomain);
+
   assert.forAll(
     (a: any[], b: any[]) => {
-      const naiveSeq = naiveLcs(a, b);
-      const seq = lcs(a, b);
-
-      return JSON.stringify(seq) == JSON.stringify(naiveSeq);
+      const seq = naiveLcs(a, b);
+      return checkLcs(a, b, a.length + b.length - (seq.length * 2));
     },
-    arrWithSmallDomain, arrWithSmallDomain
+    arrWithSmallDomain,
+    arrWithSmallDomain
   );
 
   assert.forAll(
     (a: any[], b: any[]) => {
-      const seq = lcs(a, b);
-      const constrainedSeq = seq && lcs(a, b, Math.max(a.length, b.length) - seq.length);
-
-      return !!constrainedSeq && JSON.stringify(seq) == JSON.stringify(constrainedSeq);
+      const seq = naiveLcs(a, b);
+      return !lcs(a, b, a.length + b.length - (seq.length * 2) - 1);
     },
-    arrWithSmallDomain, arrWithSmallDomain
-  );
-
-  assert.forAll(
-    (a: any[], b: any[]) => {
-      const seq = lcs(a, b);
-      const constrainedSeq = seq && lcs(a, b, Math.max(a.length, b.length) - seq.length - 1);
-
-      return !constrainedSeq;
-    },
-    arrWithSmallDomain, arrWithSmallDomain
+    arrWithSmallDomain,
+    arrWithSmallDomain
   );
 });
 
@@ -310,25 +346,25 @@ test("deepEqual", assert => {
 test("diff", assert => {
   assert.forAll((a, b) => deepEqual(applyDiff(a, diff(a, b)), b), anyJson, anyJson);
 
-  assert.forAll((a: any, d: Diff) => { 
+  assert.forAll((a: any, d: Diff) => {
     let b = applyDiff(a, d);
-    return deepEqual(applyDiff(a, diff(a, b)), b) 
+    return deepEqual(applyDiff(a, diff(a, b)), b)
   }, ...withMutations(obj));
 
-  assert.forAll((a: any, d: Diff) => { 
+  assert.forAll((a: any, d: Diff) => {
     let b = applyDiff(a, d);
     return !!diff(a, b, d.length);
   }, ...withMutations(obj));
 
-  assert.forAll((a: any, d: Diff) => { 
+  assert.forAll((a: any, d: Diff) => {
     let b = applyDiff(a, d);
     let d2 = diff(a, b);
     let d3 = d2 ? diff(a, b, d2.length - 1) : [];
     return d3 && d3.length === 1;
   }, ...withMutations(obj));
 
-  assert.forAll((a: any, d: Diff) => { 
+  assert.forAll((a: any, d: Diff) => {
     let b = applyDiff(a, d);
-    return deepEqual(applyDiff(a, diff(a, b)), b) 
+    return deepEqual(applyDiff(a, diff(a, b)), b)
   }, ...withMutations(arr));
 });

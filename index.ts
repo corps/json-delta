@@ -188,9 +188,7 @@ function gatherDiff(
         tolerance - result.length,
         () => thunks.push(() => ++offset),
         (aIdx: number, bIdx: number) =>
-          thunks.push(() =>
-            result.push(path.concat([offset]))
-          ),
+          thunks.push(() => result.push(path.concat([offset]))),
         (aIdx: number, bIdx: number) =>
           thunks.push(() => {
             result.push([path.concat([offset++]), (b as any)[bIdx]]);
@@ -228,7 +226,15 @@ function gatherDiff(
         continue;
       }
 
-      if (gatherDiff((a as any)[k], (b as any)[k], tolerance, path.concat([k]), result)){
+      if (
+        gatherDiff(
+          (a as any)[k],
+          (b as any)[k],
+          tolerance,
+          path.concat([k]),
+          result
+        )
+      ) {
         return true;
       }
 
@@ -254,9 +260,6 @@ function gatherDiff(
   return false;
 }
 
-const min = Math.min;
-const max = Math.max;
-
 export function deepEqual(a: AnyJson, b: AnyJson) {
   return a === b || diff(a, b, 0) == null;
 }
@@ -271,7 +274,7 @@ export function deepEqual(a: AnyJson, b: AnyJson) {
 export function lcs(
   a: AnyJson[],
   b: AnyJson[],
-  tolerance = Math.max(a.length, b.length)
+  tolerance = a.length + b.length
 ): AnyJson[] | void {
   let result: AnyJson[] = [];
   return arrDiff(a, b, tolerance, aIdx => result.push(a[aIdx]))
@@ -279,85 +282,96 @@ export function lcs(
     : null;
 }
 
-export function arrDiff(
+function arrDiff(
   a: AnyJson[],
   b: AnyJson[],
-  tolerance = Math.max(a.length, b.length),
+  tolerance = a.length + b.length,
   onEq: (aIdx: number, bIdx: number) => void,
   onPickA: (aIdx: number, bIdx: number) => void = () => null,
   onPickB: (aIdx: number, bIdx: number) => void = () => null
 ): boolean {
-  const solutions = new Uint32Array(a.length * b.length);
-  const aLen = a.length;
-  const bLen = b.length;
+  tolerance = Math.min(tolerance, a.length + b.length);
 
-  if (Math.abs(aLen - bLen) > tolerance) return false;
+  let aLen = a.length;
+  let bLen = b.length;
+  let aOfDiagonal = new Uint32Array(tolerance * 2 + 2);
+  let aOfDiagonalForEditSize = new Array(tolerance + 1);
 
-  let longest = 0;
+  let shortestEdit: [number, number] | void = (function() {
+    for (var d = 0; d <= tolerance; ++d) {
+      for (var k = -d; k <= d; k += 2) {
+        let aIdx: number;
 
-  let aIdx = 0;
-  let bIdx = 0;
-  let nextA: AnyJson;
-  let nextB: AnyJson;
-  let idx: number;
-
-  for (; aIdx < aLen; ++aIdx) {
-    nextA = a[aIdx];
-
-    for (bIdx = 0; bIdx < bLen; ++bIdx) {
-      nextB = b[bIdx];
-      idx = aIdx * bLen + bIdx;
-
-      let best: number;
-      if (deepEqual(nextA, nextB)) {
-        best = (aIdx > 0 && bIdx > 0 ? solutions[idx - bLen - 1] : 0) + 1;
-        if (best > longest) {
-          longest = best;
+        let takeB = aOfDiagonal[k + 1 + tolerance];
+        let takeA = aOfDiagonal[k - 1 + tolerance];
+        if (k === -d || (k !== d && takeA < takeB)) {
+          aIdx = takeB;
+        } else {
+          aIdx = takeA + 1;
         }
-      } else {
-        const left = aIdx > 0 ? solutions[idx - bLen] : 0;
-        const up = bIdx > 0 ? solutions[idx - 1] : 0;
-        best = max(left, up);
+
+        let bIdx = aIdx - k;
+
+        while (
+          aIdx < aLen &&
+          bIdx < bLen &&
+          deepEqual(a[aIdx], b[bIdx])
+        ) {
+          aIdx++;
+          bIdx++;
+        }
+
+        aOfDiagonal[k + tolerance] = aIdx;
+
+        if (aIdx >= aLen && bIdx >= bLen) {
+          aOfDiagonalForEditSize[d] = aOfDiagonal.slice();
+          return [d, k] as [number, number];
+        }
       }
 
-      solutions[idx] = best;
-
-      if (min(aIdx, bIdx) + 1 - best > tolerance) break;
-    }
-  }
-
-  if (max(aLen, bLen) - longest > tolerance) return false;
-
-  aIdx = aLen - 1;
-  bIdx = bLen - 1;
-
-  while (aIdx >= 0 && bIdx >= 0) {
-    nextA = a[aIdx];
-    nextB = b[bIdx];
-    idx = aIdx * bLen + bIdx;
-
-    if (deepEqual(nextA, nextB)) {
-      onEq(aIdx--, bIdx--);
-      continue;
+      aOfDiagonalForEditSize[d] = aOfDiagonal.slice();
     }
 
-    let left = aIdx > 0 ? solutions[idx - bLen] : 0;
-    let up = bIdx > 0 ? solutions[idx - 1] : 0;
+    return null;
+  })();
 
-    if (left >= up) {
-      onPickA(aIdx--, bIdx);
-    } else {
-      onPickB(aIdx, bIdx--);
+  if (shortestEdit) {
+    let [d, k] = shortestEdit;
+    let aIdx = aOfDiagonalForEditSize[d][k + tolerance];
+    let bIdx = aIdx - k;
+
+    while (d > 0) {
+      let k = aIdx - bIdx;
+      let v = aOfDiagonalForEditSize[d - 1];
+      let prevK: number;
+      if (k === -d || (k !== d && v[k - 1 + tolerance] < v[k + 1 + tolerance])) {
+        prevK = k + 1;
+      } else {
+        prevK = k - 1;
+      }
+
+      let prevAIdx = v[prevK + tolerance];
+      let prevBIdx = prevAIdx - prevK;
+
+      while (aIdx > prevAIdx && bIdx > prevBIdx) {
+        onEq(--aIdx, --bIdx);
+      }
+
+      if (aIdx > prevAIdx) {
+        onPickA(--aIdx, bIdx);
+      } else if (bIdx > prevBIdx) {
+        onPickB(aIdx, --bIdx);
+      }
+
+      --d;
     }
+
+    while (aIdx > 0 && bIdx > 0) {
+      onEq(--aIdx, --bIdx);
+    }
+
+    return true;
   }
 
-  while (aIdx >= 0) {
-    onPickA(aIdx--, bIdx);
-  }
-
-  while (bIdx >= 0) {
-    onPickB(aIdx, bIdx--);
-  }
-
-  return true;
+  return false;
 }
