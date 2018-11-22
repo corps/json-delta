@@ -1,3 +1,6 @@
 karma.conf.*
 tests.*
 default.nix
+*.ts
+tsconfig.json
+!index.d.ts
