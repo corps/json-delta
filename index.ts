@@ -1,8 +1,8 @@
 export type AnyJson = boolean | number | string | null | JsonArray | JsonMap;
-interface JsonMap {
+export interface JsonMap {
   [key: string]: AnyJson;
 }
-interface JsonArray extends Array<AnyJson> {}
+export interface JsonArray extends Array<AnyJson> {}
 
 export type ObjPath = (string | number)[];
 export type DiffInsert = [ObjPath, any];
